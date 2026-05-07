@@ -18,7 +18,7 @@ use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings};
 use iced_layershell::to_layer_message;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Flags {
     pub message: String,
     pub duration: Duration,
@@ -68,7 +68,7 @@ impl Application for AlertApp {
             Message::Tick => {
                 if Instant::now() >= self.deadline {
                     // Subscription fired past the deadline -> exit the app.
-                    iced_runtime::task::effect(iced_runtime::Action::Exit)
+                    iced::exit()
                 } else {
                     Task::none()
                 }
