@@ -60,7 +60,7 @@ Order must be `h → m → s`, each unit at most once.
 | `-d, --decay <FLOAT>`         | `0.5`            | Decay factor. Each cycle the wait is multiplied by this. Must be `0 < x < 1`. |
 | `-f, --floor <DURATION>`      | `5s`             | When the next wait would be ≤ this, stop and lock. |
 | `-m, --message <STRING>`      | `"time expired"` | Text shown on the red overlay.                  |
-| `-D, --alert-duration <DUR>`  | `1s`             | How long the red overlay is visible per alert.  |
+| `-D, --alert-duration <DUR>`  | `2s`             | How long the red overlay is visible per alert.  |
 | `-b, --beep`                  | off              | Print BEL (`\x07`) on each alert. Your terminal/WM decides what that does. |
 | `-h, --help`                  | —                | Print help.                                     |
 | `-V, --version`               | —                | Print version.                                  |
@@ -75,9 +75,9 @@ What happens:
 
 ```
 t = 0       │ start, sleep 5m
-t = 5m      │ ▓▓▓ red flash 1s ▓▓▓  "stand up dummy"
-t = 5m1s    │ sleep 2m30s
-t = 7m31s   │ ▓▓▓ red flash 1s ▓▓▓
+t = 5m      │ ▓▓▓ red flash 2s ▓▓▓  "stand up dummy"
+t = 5m2s    │ sleep 2m30s
+t = 7m32s   │ ▓▓▓ red flash 2s ▓▓▓
 t = 7m32s   │ sleep 1m15s
               ...
               next wait = 4.5s, ≤ floor → hyprlock → exit 0

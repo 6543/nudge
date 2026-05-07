@@ -49,7 +49,7 @@ struct Cli {
     message: String,
 
     /// How long the red overlay stays visible per alert.
-    #[arg(short = 'D', long, default_value = "1s")]
+    #[arg(short = 'D', long, default_value = "2s")]
     alert_duration: String,
 
     /// Print BEL (\x07) on each alert. Terminal/WM decides what that does.
