@@ -1,0 +1,28 @@
+when:
+  - event: [push, pull_request, manual]
+
+steps:
+  format:
+    image: nixos/nix
+    commands:
+      - echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf
+      - nix --accept-flake-config flake check .#format
+
+  clippy:
+    image: nixos/nix
+    commands:
+      - echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf
+      - nix --accept-flake-config flake check .#clippy
+
+  test:
+    image: nixos/nix
+    commands:
+      - echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf
+      - nix --accept-flake-config develop --command cargo test --all-features
+
+  build:
+    image: nixos/nix
+    commands:
+      - echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf
+      - nix --accept-flake-config build .#default
+    depends_on: [format, clippy, test]
