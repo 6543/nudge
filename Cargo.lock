@@ -2173,7 +2173,6 @@ dependencies = [
  "clap",
  "iced",
  "iced_layershell",
- "iced_runtime",
  "once_cell",
  "signal-hook",
  "thiserror 1.0.69",
