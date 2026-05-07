@@ -1,0 +1,26 @@
+[package]
+name = "nudge"
+version = "0.1.0"
+edition = "2021"
+authors = ["6543"]
+license = "MIT"
+description = "ADHD-friendly self-nudge timer for Wayland — flashes red overlay on interval, locks screen when done"
+repository = "https://github.com/6543/nudge"
+readme = "README.md"
+keywords = ["timer", "wayland", "adhd", "pomodoro", "hyprland"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+iced = { version = "0.13", features = ["tokio", "advanced"] }
+iced_layershell = "0.13"
+iced_runtime = "0.13"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+once_cell = "1"
+signal-hook = "0.3"
+thiserror = "1"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
