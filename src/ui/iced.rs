@@ -29,9 +29,15 @@ impl Default for IcedLayerShellUi {
 }
 
 impl UiBackend for IcedLayerShellUi {
-    fn alert(&self, message: &str, duration: Duration) -> Result<(), UiError> {
+    fn alert(
+        &self,
+        message: &str,
+        subtitle: Option<&str>,
+        duration: Duration,
+    ) -> Result<(), UiError> {
         let flags = Flags {
             message: message.to_owned(),
+            subtitle: subtitle.map(str::to_owned),
             duration,
         };
         AlertApp::run(alert::settings(flags))

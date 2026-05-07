@@ -131,6 +131,22 @@ fn spawn_locker() -> Result<(), String> {
         .map_err(|e| format!("failed to spawn hyprlock: {e}"))
 }
 
+/// Format a Duration as a short human string: "2m 30s", "45s", "1h 5m".
+/// Seconds are dropped above 1 hour (granularity isn't useful at that range).
+fn humanize(d: Duration) -> String {
+    let total = d.as_secs();
+    let h = total / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    match (h, m, s) {
+        (0, 0, s) => format!("{s}s"),
+        (0, m, 0) => format!("{m}m"),
+        (0, m, s) => format!("{m}m {s}s"),
+        (h, 0, _) => format!("{h}h"),
+        (h, m, _) => format!("{h}h {m}m"),
+    }
+}
+
 fn run(cfg: Config, cancel: Arc<AtomicBool>) -> Result<(), String> {
     let ui = IcedLayerShellUi::new();
 
@@ -142,20 +158,28 @@ fn run(cfg: Config, cancel: Arc<AtomicBool>) -> Result<(), String> {
 
     let mut wait = cfg.initial;
     loop {
+        // Compute what comes next BEFORE showing the alert, so the alert
+        // can display it as a subtitle.
+        let next = decay(wait, cfg.decay);
+        let is_final = next <= cfg.floor;
+        let subtitle: String = if is_final {
+            "locking screen".into()
+        } else {
+            format!("next nudge in {}", humanize(next))
+        };
+
         // Phase 2: alert.
         if cfg.beep {
             beep();
         }
-        ui.alert(&cfg.message, cfg.alert_duration)
+        ui.alert(&cfg.message, Some(&subtitle), cfg.alert_duration)
             .map_err(|e| format!("alert failed: {e}"))?;
         if cancel.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        // Phase 3: decay; check floor before sleeping.
-        let next = decay(wait, cfg.decay);
-        if next <= cfg.floor {
-            // Phase 4: lock and exit.
+        // Phase 3 / 4: lock + exit, or decay + sleep again.
+        if is_final {
             spawn_locker()?;
             return Ok(());
         }
@@ -240,5 +264,30 @@ mod tests {
             assert!(n < 100, "decay loop never terminated");
         }
         assert_eq!(n, 5);
+    }
+
+    #[test]
+    fn humanize_seconds_only() {
+        assert_eq!(humanize(Duration::from_secs(5)), "5s");
+        assert_eq!(humanize(Duration::from_secs(45)), "45s");
+    }
+
+    #[test]
+    fn humanize_minutes_only() {
+        assert_eq!(humanize(Duration::from_secs(60)), "1m");
+        assert_eq!(humanize(Duration::from_secs(300)), "5m");
+    }
+
+    #[test]
+    fn humanize_minutes_and_seconds() {
+        assert_eq!(humanize(Duration::from_secs(150)), "2m 30s");
+        assert_eq!(humanize(Duration::from_secs(75)), "1m 15s");
+    }
+
+    #[test]
+    fn humanize_hours() {
+        assert_eq!(humanize(Duration::from_secs(3600)), "1h");
+        assert_eq!(humanize(Duration::from_secs(5400)), "1h 30m");
+        assert_eq!(humanize(Duration::from_secs(7290)), "2h 1m");
     }
 }

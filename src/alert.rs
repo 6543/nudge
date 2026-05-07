@@ -12,7 +12,7 @@
 use std::time::{Duration, Instant};
 
 use iced::{Color, Element, Length, Task, Theme};
-use iced::widget::{container, text};
+use iced::widget::{column, container, text};
 use iced_layershell::Application;
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings};
@@ -21,11 +21,13 @@ use iced_layershell::to_layer_message;
 #[derive(Debug, Clone, Default)]
 pub struct Flags {
     pub message: String,
+    pub subtitle: Option<String>,
     pub duration: Duration,
 }
 
 pub struct AlertApp {
     message: String,
+    subtitle: Option<String>,
     duration: Duration,
     /// Set on the first tick after the surface is mapped, NOT in `new()`.
     /// Wayland surface creation can take hundreds of ms; using `Instant::now()`
@@ -49,6 +51,7 @@ impl Application for AlertApp {
     fn new(flags: Flags) -> (Self, Task<Message>) {
         let app = Self {
             message: flags.message,
+            subtitle: flags.subtitle,
             duration: flags.duration,
             deadline: None,
         };
@@ -85,12 +88,25 @@ impl Application for AlertApp {
     }
 
     fn view(&self) -> Element<'_, Message, Theme> {
-        // Solid red background, centered white message text, large.
-        let label = text(&self.message)
+        // Solid red background; centered column with primary message (large)
+        // and optional subtitle (smaller, below).
+        let primary = text(&self.message)
             .size(96)
             .color(Color::WHITE);
 
-        container(label)
+        let mut children: Vec<Element<'_, Message, Theme>> = vec![primary.into()];
+        if let Some(sub) = &self.subtitle {
+            let subtitle_widget = text(sub)
+                .size(28)
+                .color(Color::from_rgb(1.0, 0.85, 0.85));
+            children.push(subtitle_widget.into());
+        }
+
+        let col = column(children)
+            .spacing(16)
+            .align_x(iced::Alignment::Center);
+
+        container(col)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)

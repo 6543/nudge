@@ -27,7 +27,16 @@ pub enum UiError {
 ///   - NOT grab keyboard or pointer input (visual only)
 ///   - block until the overlay has been visible for `duration`, then return
 pub trait UiBackend {
-    /// Show the alert with the given message for the given duration.
-    /// Blocks until the overlay has been dismissed.
-    fn alert(&self, message: &str, duration: Duration) -> Result<(), UiError>;
+    /// Show the alert for `duration`, then return.
+    ///
+    /// `message` is the primary text (large, centered).
+    /// `subtitle` is optional smaller text shown below the message (e.g.
+    /// "next nudge in 2m 30s" or "locking now"). Backends should render it
+    /// at a noticeably smaller size than `message`, or omit it if `None`.
+    fn alert(
+        &self,
+        message: &str,
+        subtitle: Option<&str>,
+        duration: Duration,
+    ) -> Result<(), UiError>;
 }
