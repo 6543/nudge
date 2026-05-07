@@ -20,7 +20,6 @@ use nudge::ui::UiBackend;
 
 const EXIT_USAGE: i32 = 2;
 const EXIT_RUNTIME: i32 = 1;
-const EXIT_SIGINT: i32 = 130;
 const EXIT_SIGTERM: i32 = 143;
 
 /// ADHD-friendly self-nudge timer for Wayland.
@@ -193,11 +192,11 @@ fn run(cfg: Config, cancel: Arc<AtomicBool>) -> Result<(), String> {
 
 fn install_signal_handlers() -> Arc<AtomicBool> {
     let cancel = Arc::new(AtomicBool::new(false));
-    // SIGINT -> exit 130, SIGTERM -> exit 143. We just flip a flag; the main
-    // loop polls it in sleep_cancellable. The exit code is decided in main()
-    // by checking which signal was received via two flags would be overkill;
-    // we treat any cancel as graceful. The shell's "$?" will reflect 130/143
-    // only if the user actually sent the signal, which is what they expect.
+    // Both SIGINT and SIGTERM flip the same flag; the timer loop polls it
+    // in sleep_cancellable. We don't distinguish which signal arrived, so
+    // the exit code in main() is always 143 for any cancelled run. The
+    // shell's "$?" reporting 130 vs 143 only matters when the parent
+    // process is monitoring it — for a personal CLI, KISS wins.
     use signal_hook::consts::{SIGINT, SIGTERM};
     use signal_hook::flag;
     flag::register(SIGINT, Arc::clone(&cancel)).expect("register SIGINT");
@@ -220,8 +219,6 @@ fn main() {
     match run(cfg, Arc::clone(&cancel)) {
         Ok(()) => {
             if cancel.load(Ordering::Relaxed) {
-                // Couldn't easily distinguish SIGINT vs SIGTERM with a single
-                // flag; default to SIGTERM exit code. Refine if it matters.
                 process::exit(EXIT_SIGTERM);
             }
             process::exit(0);
