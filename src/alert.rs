@@ -26,7 +26,12 @@ pub struct Flags {
 
 pub struct AlertApp {
     message: String,
-    deadline: Instant,
+    duration: Duration,
+    /// Set on the first tick after the surface is mapped, NOT in `new()`.
+    /// Wayland surface creation can take hundreds of ms; using `Instant::now()`
+    /// in `new()` makes short alerts (1-2s) elapse before the first frame is
+    /// even drawn, producing a flash with no visible overlay.
+    deadline: Option<Instant>,
 }
 
 #[to_layer_message]
@@ -44,7 +49,8 @@ impl Application for AlertApp {
     fn new(flags: Flags) -> (Self, Task<Message>) {
         let app = Self {
             message: flags.message,
-            deadline: Instant::now() + flags.duration,
+            duration: flags.duration,
+            deadline: None,
         };
         (app, Task::none())
     }
@@ -66,8 +72,9 @@ impl Application for AlertApp {
     fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::Tick => {
-                if Instant::now() >= self.deadline {
-                    // Subscription fired past the deadline -> exit the app.
+                let now = Instant::now();
+                let deadline = *self.deadline.get_or_insert(now + self.duration);
+                if now >= deadline {
                     iced::exit()
                 } else {
                     Task::none()
