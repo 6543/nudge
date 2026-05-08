@@ -61,7 +61,7 @@ cargo build --release
 ./target/release/nudge 5m
 ```
 
-You'll need `hyprlock` available on `PATH` for the screen-lock step.
+You'll need a screen locker available on `PATH`. `nudge` auto-detects in order: `loginctl lock-session` (GNOME, KDE, niri, sway, …), then `hyprlock`, `swaylock`, `waylock`, `gnome-screensaver-command`, `xdg-screensaver`.
 
 ## Usage
 
@@ -132,7 +132,7 @@ alias train='nudge 2h 15m -m "LEAVE FOR THE TRAIN"'
 - **No daemon, no IPC, no config file.** It's a CLI tool. You launch it, it runs, it dies.
 - **Multiple instances allowed.** Run two `nudge`s, get two independent schedules. Your decision.
 - **Wayland layer-shell only.** The UI is split behind a backend trait, so X11 / macOS support is a "someone implements one trait" away, but it's not done now because it's not needed now.
-- **Hard-coded `hyprlock`.** A locker abstraction would be premature. Open an issue if you want `swaylock` etc.
+- **Locker auto-detection.** `nudge` tries lockers in this order: `loginctl lock-session` (works on GNOME, KDE Plasma, niri, sway, and any DE that registers a locker with logind), then DE-specific binaries derived from `XDG_CURRENT_DESKTOP`/`XDG_SESSION_DESKTOP` (hyprlock for Hyprland, qdbus/dbus-send for KDE, gnome-screensaver-command for GNOME), then generic Wayland lockers found on PATH (`hyprlock`, `swaylock`, `waylock`), and finally `xdg-screensaver lock` as a legacy fallback. The first that succeeds is used.
 
 ## For the technically interested
 

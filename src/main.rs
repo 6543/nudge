@@ -210,13 +210,116 @@ fn beep() {
     let _ = out.flush();
 }
 
-fn spawn_locker() -> Result<(), String> {
-    // Hardcoded for v1, see README "Design decisions". Spawn detached and
-    // return immediately so the parent can exit.
-    Command::new("hyprlock")
+/// Return true if `program` exists somewhere on PATH.
+fn program_exists(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path)
+                .any(|dir| dir.join(program).is_file())
+        })
+        .unwrap_or(false)
+}
+
+/// Try to spawn `argv[0]` with the remaining elements as arguments.
+/// Returns Ok(()) if the process was successfully spawned (detached).
+fn try_spawn(argv: &[&str]) -> Result<(), ()> {
+    if argv.is_empty() {
+        return Err(());
+    }
+    if !program_exists(argv[0]) {
+        return Err(());
+    }
+    Command::new(argv[0])
+        .args(&argv[1..])
         .spawn()
-        .map(|_child| ())
-        .map_err(|e| format!("failed to spawn hyprlock: {e}"))
+        .map(|_| ())
+        .map_err(|_| ())
+}
+
+/// Lock the screen using the best available method.
+///
+/// Strategy (first success wins):
+///
+/// 1. `loginctl lock-session` — works on GNOME (Wayland/X11), KDE Plasma
+///    (Wayland), niri, sway, and any DE/WM that registers a locker with
+///    logind via the `Lock` D-Bus signal. This is the most portable option.
+///
+/// 2. DE/WM-specific binaries discovered from `XDG_CURRENT_DESKTOP` and
+///    `XDG_SESSION_DESKTOP`:
+///    - Hyprland → `hyprlock`
+///    - KDE → `loginctl lock-session` already covers it; `qdbus` fallback
+///    - GNOME → `gnome-screensaver-command --lock`
+///
+/// 3. Generic Wayland screen-locker binaries found on PATH (in priority
+///    order): `hyprlock`, `swaylock`, `waylock`.
+///
+/// 4. `xdg-screensaver lock` — legacy X11/mixed fallback.
+///
+/// If every attempt fails the error from the last attempt is returned.
+fn spawn_locker() -> Result<(), String> {
+    // 1. loginctl — portable across most modern DEs on systemd.
+    if try_spawn(&["loginctl", "lock-session"]).is_ok() {
+        return Ok(());
+    }
+
+    // 2. DE-specific, derived from environment.
+    let current_desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let session_desktop = std::env::var("XDG_SESSION_DESKTOP")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let desktop = format!("{current_desktop}:{session_desktop}");
+
+    if desktop.contains("hyprland") {
+        if try_spawn(&["hyprlock"]).is_ok() {
+            return Ok(());
+        }
+    }
+    if desktop.contains("kde") || desktop.contains("plasma") {
+        // qdbus path used by KDE when loginctl didn't work.
+        if try_spawn(&[
+            "qdbus",
+            "org.freedesktop.ScreenSaver",
+            "/ScreenSaver",
+            "Lock",
+        ])
+        .is_ok()
+        {
+            return Ok(());
+        }
+        if try_spawn(&[
+            "dbus-send",
+            "--session",
+            "--dest=org.freedesktop.ScreenSaver",
+            "--type=method_call",
+            "/ScreenSaver",
+            "org.freedesktop.ScreenSaver.Lock",
+        ])
+        .is_ok()
+        {
+            return Ok(());
+        }
+    }
+    if desktop.contains("gnome") || desktop.contains("unity") {
+        if try_spawn(&["gnome-screensaver-command", "--lock"]).is_ok() {
+            return Ok(());
+        }
+    }
+
+    // 3. Generic Wayland lockers present on PATH.
+    for binary in &["hyprlock", "swaylock", "waylock"] {
+        if try_spawn(&[binary]).is_ok() {
+            return Ok(());
+        }
+    }
+
+    // 4. Legacy xdg-screensaver.
+    if try_spawn(&["xdg-screensaver", "lock"]).is_ok() {
+        return Ok(());
+    }
+
+    Err("could not find a screen locker; tried loginctl, hyprlock, swaylock, waylock, gnome-screensaver-command, xdg-screensaver. Install one or ensure loginctl lock-session works.".into())
 }
 
 /// Format a Duration as a short human string: "2m 30s", "45s", "1h 5m".
@@ -739,5 +842,28 @@ mod tests {
         // series cut off at the floor).
         let tail: Duration = plan.waits[1..].iter().sum();
         assert!(tail <= Duration::from_secs(60));
+    }
+
+    #[test]
+    fn program_exists_finds_sh() {
+        // `sh` is present on every Unix system; use it as a canary.
+        assert!(program_exists("sh"));
+    }
+
+    #[test]
+    fn program_exists_rejects_nonexistent() {
+        assert!(!program_exists("__nudge_nonexistent_binary_xyz__"));
+    }
+
+    #[test]
+    fn try_spawn_fails_for_nonexistent() {
+        // A binary that definitely doesn't exist must return Err without
+        // panicking.
+        assert!(try_spawn(&["__nudge_nonexistent_binary_xyz__"]).is_err());
+    }
+
+    #[test]
+    fn try_spawn_empty_argv_is_err() {
+        assert!(try_spawn(&[]).is_err());
     }
 }
