@@ -190,7 +190,12 @@ fn run(cfg: Config, cancel: Arc<AtomicBool>) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut wait = cfg.initial;
+    // The decay loop starts from `runway`, not `initial`. This makes the
+    // first post-alert wait `runway * decay` (= runway/2 with default decay),
+    // which gives a geometric tail that sums to ~runway. Decoupling the
+    // initial wait from the tail length is the whole point of the feature:
+    // a 2h timer no longer means a 1h gap until the second nudge.
+    let mut wait = cfg.runway;
     loop {
         // Compute what comes next BEFORE showing the alert, so the alert
         // can display it as a subtitle.
