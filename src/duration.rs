@@ -163,4 +163,81 @@ mod tests {
         // 90 minutes parsed as a single m component should still work
         assert_eq!(parse("90m").unwrap(), d(5400));
     }
+
+    #[test]
+    fn rejects_negative_or_signed() {
+        // No sign characters are allowed; '-' should be an unexpected char.
+        assert!(matches!(parse("-5s"), Err(ParseError::UnexpectedChar('-', 0))));
+        assert!(matches!(parse("+5s"), Err(ParseError::UnexpectedChar('+', 0))));
+    }
+
+    #[test]
+    fn rejects_whitespace() {
+        // Whitespace is not part of the grammar — leading, internal, or trailing.
+        assert!(matches!(parse(" 5s"), Err(ParseError::UnexpectedChar(' ', 0))));
+        assert!(matches!(parse("5 s"), Err(ParseError::UnexpectedChar(' ', _))));
+        assert!(matches!(parse("5s "), Err(ParseError::UnexpectedChar(' ', _))));
+        assert!(matches!(parse("1h 30m"), Err(ParseError::UnexpectedChar(' ', _))));
+    }
+
+    #[test]
+    fn rejects_uppercase_units() {
+        // Units are lowercase only. 'H' is not a valid unit.
+        assert!(matches!(parse("5H"), Err(ParseError::UnexpectedChar('H', _))));
+        assert!(matches!(parse("5M"), Err(ParseError::UnexpectedChar('M', _))));
+        assert!(matches!(parse("5S"), Err(ParseError::UnexpectedChar('S', _))));
+    }
+
+    #[test]
+    fn rejects_decimal() {
+        // No fractional values.
+        assert!(matches!(parse("1.5h"), Err(ParseError::UnexpectedChar('.', _))));
+    }
+
+    #[test]
+    fn allows_zero_components_when_total_is_nonzero() {
+        // 5h0m0s is valid (= 5h). Only entirely zero is rejected.
+        assert_eq!(parse("5h0m").unwrap(), d(5 * 3600));
+        assert_eq!(parse("5h0m0s").unwrap(), d(5 * 3600));
+        assert_eq!(parse("0h5m").unwrap(), d(5 * 60));
+        assert_eq!(parse("0h0m5s").unwrap(), d(5));
+    }
+
+    #[test]
+    fn handles_one_second() {
+        // Smallest valid duration.
+        assert_eq!(parse("1s").unwrap(), d(1));
+    }
+
+    #[test]
+    fn rejects_unit_without_number() {
+        // Lone unit char at start is unexpected; we report it as such.
+        assert!(matches!(parse("s"), Err(ParseError::UnexpectedChar('s', 0))));
+        assert!(matches!(parse("hms"), Err(ParseError::UnexpectedChar('h', 0))));
+    }
+
+    #[test]
+    fn rejects_double_h_or_double_s() {
+        // Each unit at most once, even via separate components.
+        assert_eq!(parse("1h2h"), Err(ParseError::DuplicateUnit('h')));
+        assert_eq!(parse("1s1s"), Err(ParseError::DuplicateUnit('s')));
+    }
+
+    #[test]
+    fn parses_canonical_examples_from_readme() {
+        // Sanity: every duration mentioned in the README must parse.
+        for s in [
+            "30s", "5m", "2h", "1h30m", "2m30s", "1h30m45s",
+            "25m", "90m", "10s",
+        ] {
+            assert!(parse(s).is_ok(), "README example {s:?} failed to parse");
+        }
+    }
+
+    #[test]
+    fn overflow_on_huge_input() {
+        // Way beyond u64 seconds. Should error, not panic.
+        let s: String = "9".repeat(30) + "h";
+        assert_eq!(parse(&s), Err(ParseError::Overflow));
+    }
 }
