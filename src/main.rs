@@ -35,6 +35,17 @@ struct Cli {
     #[arg(value_name = "DURATION")]
     duration: String,
 
+    /// Optional second positional argument: total nudging "runway" after the
+    /// first alert. The first post-alert wait is set to runway/2, then halved
+    /// each cycle, so the geometric tail sums to ~runway. If omitted, defaults
+    /// to 20m for initial durations >= 2h, otherwise 10m.
+    ///
+    /// Example: `nudge 2h 15m` -> alert at 2h, then ~15m of decaying nudges
+    /// before the screen locks. Useful for "don't miss the 14:15 train" type
+    /// reminders where you want a fixed warning window before the lock.
+    #[arg(value_name = "RUNWAY")]
+    runway: Option<String>,
+
     /// Decay factor applied to the wait between alerts. Must be 0 < x < 1.
     #[arg(short, long, default_value_t = 0.5)]
     decay: f64,
@@ -58,11 +69,23 @@ struct Cli {
 
 struct Config {
     initial: Duration,
+    runway: Duration,
     decay: f64,
     floor: Duration,
     message: String,
     alert_duration: Duration,
     beep: bool,
+}
+
+/// Default runway when no second positional arg is given.
+/// >= 2h initial -> 20m runway; otherwise 10m.
+fn default_runway(initial: Duration) -> Duration {
+    const TWO_HOURS: Duration = Duration::from_secs(2 * 3600);
+    if initial >= TWO_HOURS {
+        Duration::from_secs(20 * 60)
+    } else {
+        Duration::from_secs(10 * 60)
+    }
 }
 
 impl Config {
@@ -76,14 +99,26 @@ impl Config {
             .map_err(|e| format!("invalid --floor: {e}"))?;
         let alert_duration = durparse::parse(&cli.alert_duration)
             .map_err(|e| format!("invalid --alert-duration: {e}"))?;
+        let runway = match cli.runway.as_deref() {
+            Some(s) => durparse::parse(s)
+                .map_err(|e| format!("invalid <RUNWAY>: {e}"))?,
+            None => default_runway(initial),
+        };
         if initial <= floor {
             return Err(format!(
                 "<DURATION> ({:?}) must be greater than --floor ({:?})",
                 initial, floor
             ));
         }
+        if runway <= floor {
+            return Err(format!(
+                "<RUNWAY> ({:?}) must be greater than --floor ({:?})",
+                runway, floor
+            ));
+        }
         Ok(Self {
             initial,
+            runway,
             decay: cli.decay,
             floor,
             message: cli.message,
@@ -286,5 +321,29 @@ mod tests {
         assert_eq!(humanize(Duration::from_secs(3600)), "1h");
         assert_eq!(humanize(Duration::from_secs(5400)), "1h 30m");
         assert_eq!(humanize(Duration::from_secs(7290)), "2h 1m");
+    }
+
+    #[test]
+    fn default_runway_short_initial() {
+        // Anything below 2h gets the short default.
+        assert_eq!(default_runway(Duration::from_secs(60)), Duration::from_secs(600));
+        assert_eq!(default_runway(Duration::from_secs(3600)), Duration::from_secs(600));
+        assert_eq!(
+            default_runway(Duration::from_secs(2 * 3600 - 1)),
+            Duration::from_secs(600),
+        );
+    }
+
+    #[test]
+    fn default_runway_long_initial() {
+        // 2h on the dot or longer gets the long default.
+        assert_eq!(
+            default_runway(Duration::from_secs(2 * 3600)),
+            Duration::from_secs(20 * 60),
+        );
+        assert_eq!(
+            default_runway(Duration::from_secs(4 * 3600)),
+            Duration::from_secs(20 * 60),
+        );
     }
 }
