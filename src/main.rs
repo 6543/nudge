@@ -213,10 +213,7 @@ fn beep() {
 /// Return true if `program` exists somewhere on PATH.
 fn program_exists(program: &str) -> bool {
     std::env::var_os("PATH")
-        .map(|path| {
-            std::env::split_paths(&path)
-                .any(|dir| dir.join(program).is_file())
-        })
+        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
         .unwrap_or(false)
 }
 
@@ -745,8 +742,7 @@ mod tests {
         // Total ~ 25m + 9m50s ~ 34m50s.
         let total = plan.total();
         assert!(
-            total >= Duration::from_secs(34 * 60 + 45)
-                && total <= Duration::from_secs(35 * 60 + 5),
+            total >= Duration::from_secs(34 * 60 + 45) && total <= Duration::from_secs(35 * 60 + 5),
             "expected total ~35min, got {total:?}",
         );
     }
