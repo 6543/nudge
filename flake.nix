@@ -113,11 +113,19 @@
             touch $out
           '';
 
-          clippy = pkgs.runCommand "check-clippy" { buildInputs = [ toolchain ]; } ''
-            cd ${self}
-            cargo clippy -- -D warnings
-            touch $out
-          '';
+          clippy = pkgs.runCommand "check-clippy"
+            {
+              nativeBuildInputs = [
+                toolchain
+                pkgs.pkg-config
+              ];
+              buildInputs = libraries;
+            }
+            ''
+              cd ${self}
+              cargo clippy -- -D warnings
+              touch $out
+            '';
         };
 
         packages = {
