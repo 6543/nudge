@@ -268,10 +268,8 @@ fn spawn_locker() -> Result<(), String> {
         .to_ascii_lowercase();
     let desktop = format!("{current_desktop}:{session_desktop}");
 
-    if desktop.contains("hyprland") {
-        if try_spawn(&["hyprlock"]).is_ok() {
-            return Ok(());
-        }
+    if desktop.contains("hyprland") && try_spawn(&["hyprlock"]).is_ok() {
+        return Ok(());
     }
     if desktop.contains("kde") || desktop.contains("plasma") {
         // qdbus path used by KDE when loginctl didn't work.
@@ -298,10 +296,10 @@ fn spawn_locker() -> Result<(), String> {
             return Ok(());
         }
     }
-    if desktop.contains("gnome") || desktop.contains("unity") {
-        if try_spawn(&["gnome-screensaver-command", "--lock"]).is_ok() {
-            return Ok(());
-        }
+    if (desktop.contains("gnome") || desktop.contains("unity"))
+        && try_spawn(&["gnome-screensaver-command", "--lock"]).is_ok()
+    {
+        return Ok(());
     }
 
     // 3. Generic Wayland lockers present on PATH.
