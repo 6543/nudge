@@ -107,25 +107,35 @@
         };
 
         checks = {
-          format = pkgs.runCommand "check-format" { buildInputs = [ nightlyToolchain ]; } ''
-            cd ${self}
-            cargo fmt --check
-            touch $out
-          '';
+          format = pkgs.rustPlatform.buildRustPackage {
+            pname = "nudge-check-format";
+            version = cargoToml.package.version;
+            src = ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+            nativeBuildInputs = [
+              nightlyToolchain
+              pkgs.pkg-config
+            ];
+            buildInputs = libraries;
+            buildPhase = "cargo fmt --check";
+            installPhase = "touch $out";
+            doCheck = false;
+          };
 
-          clippy = pkgs.runCommand "check-clippy"
-            {
-              nativeBuildInputs = [
-                toolchain
-                pkgs.pkg-config
-              ];
-              buildInputs = libraries;
-            }
-            ''
-              cd ${self}
-              cargo clippy -- -D warnings
-              touch $out
-            '';
+          clippy = pkgs.rustPlatform.buildRustPackage {
+            pname = "nudge-check-clippy";
+            version = cargoToml.package.version;
+            src = ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+            nativeBuildInputs = [
+              toolchain
+              pkgs.pkg-config
+            ];
+            buildInputs = libraries;
+            buildPhase = "cargo clippy -- -D warnings";
+            installPhase = "touch $out";
+            doCheck = false;
+          };
         };
 
         packages = {
