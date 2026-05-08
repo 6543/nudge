@@ -40,7 +40,6 @@ impl UiBackend for IcedLayerShellUi {
             subtitle: subtitle.map(str::to_owned),
             duration,
         };
-        AlertApp::run(alert::settings(flags))
-            .map_err(|e| UiError::Runtime(e.to_string()))
+        AlertApp::run(alert::settings(flags)).map_err(|e| UiError::Runtime(e.to_string()))
     }
 }

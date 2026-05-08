@@ -11,12 +11,12 @@
 
 use std::time::{Duration, Instant};
 
-use iced::{Color, Element, Length, Task, Theme};
 use iced::widget::{column, container, text};
-use iced_layershell::Application;
+use iced::{Color, Element, Length, Task, Theme};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings};
 use iced_layershell::to_layer_message;
+use iced_layershell::Application;
 
 #[derive(Debug, Clone, Default)]
 pub struct Flags {
@@ -90,15 +90,11 @@ impl Application for AlertApp {
     fn view(&self) -> Element<'_, Message, Theme> {
         // Solid red background; centered column with primary message (large)
         // and optional subtitle (smaller, below).
-        let primary = text(&self.message)
-            .size(96)
-            .color(Color::WHITE);
+        let primary = text(&self.message).size(96).color(Color::WHITE);
 
         let mut children: Vec<Element<'_, Message, Theme>> = vec![primary.into()];
         if let Some(sub) = &self.subtitle {
-            let subtitle_widget = text(sub)
-                .size(28)
-                .color(Color::from_rgb(1.0, 0.85, 0.85));
+            let subtitle_widget = text(sub).size(28).color(Color::from_rgb(1.0, 0.85, 0.85));
             children.push(subtitle_widget.into());
         }
 

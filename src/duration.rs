@@ -77,12 +77,8 @@ pub fn parse(s: &str) -> Result<Duration, ParseError> {
                 return Err(ParseError::OutOfOrderUnit(ch));
             }
             last_unit_rank = rank as i8;
-            let component = value
-                .checked_mul(multiplier)
-                .ok_or(ParseError::Overflow)?;
-            total = total
-                .checked_add(component)
-                .ok_or(ParseError::Overflow)?;
+            let component = value.checked_mul(multiplier).ok_or(ParseError::Overflow)?;
+            total = total.checked_add(component).ok_or(ParseError::Overflow)?;
         }
     }
 
@@ -136,7 +132,10 @@ mod tests {
 
     #[test]
     fn rejects_unknown_unit() {
-        assert!(matches!(parse("5d"), Err(ParseError::UnexpectedChar('d', _))));
+        assert!(matches!(
+            parse("5d"),
+            Err(ParseError::UnexpectedChar('d', _))
+        ));
     }
 
     #[test]
@@ -153,7 +152,10 @@ mod tests {
 
     #[test]
     fn rejects_leading_unit() {
-        assert!(matches!(parse("h30"), Err(ParseError::UnexpectedChar('h', 0))));
+        assert!(matches!(
+            parse("h30"),
+            Err(ParseError::UnexpectedChar('h', 0))
+        ));
     }
 
     #[test]

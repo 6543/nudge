@@ -93,15 +93,13 @@ impl Config {
         if !(cli.decay > 0.0 && cli.decay < 1.0) {
             return Err(format!("--decay must be in (0, 1), got {}", cli.decay));
         }
-        let initial = durparse::parse(&cli.duration)
-            .map_err(|e| format!("invalid <DURATION>: {e}"))?;
-        let floor = durparse::parse(&cli.floor)
-            .map_err(|e| format!("invalid --floor: {e}"))?;
+        let initial =
+            durparse::parse(&cli.duration).map_err(|e| format!("invalid <DURATION>: {e}"))?;
+        let floor = durparse::parse(&cli.floor).map_err(|e| format!("invalid --floor: {e}"))?;
         let alert_duration = durparse::parse(&cli.alert_duration)
             .map_err(|e| format!("invalid --alert-duration: {e}"))?;
         let runway = match cli.runway.as_deref() {
-            Some(s) => durparse::parse(s)
-                .map_err(|e| format!("invalid <RUNWAY>: {e}"))?,
+            Some(s) => durparse::parse(s).map_err(|e| format!("invalid <RUNWAY>: {e}"))?,
             None => default_runway(initial),
         };
         if initial <= floor {
@@ -276,7 +274,10 @@ mod tests {
 
     #[test]
     fn decay_halves() {
-        assert_eq!(decay(Duration::from_secs(300), 0.5), Duration::from_secs(150));
+        assert_eq!(
+            decay(Duration::from_secs(300), 0.5),
+            Duration::from_secs(150)
+        );
     }
 
     #[test]
@@ -331,8 +332,14 @@ mod tests {
     #[test]
     fn default_runway_short_initial() {
         // Anything below 2h gets the short default.
-        assert_eq!(default_runway(Duration::from_secs(60)), Duration::from_secs(600));
-        assert_eq!(default_runway(Duration::from_secs(3600)), Duration::from_secs(600));
+        assert_eq!(
+            default_runway(Duration::from_secs(60)),
+            Duration::from_secs(600)
+        );
+        assert_eq!(
+            default_runway(Duration::from_secs(3600)),
+            Duration::from_secs(600)
+        );
         assert_eq!(
             default_runway(Duration::from_secs(2 * 3600 - 1)),
             Duration::from_secs(600),
