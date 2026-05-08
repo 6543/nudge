@@ -167,31 +167,61 @@ mod tests {
     #[test]
     fn rejects_negative_or_signed() {
         // No sign characters are allowed; '-' should be an unexpected char.
-        assert!(matches!(parse("-5s"), Err(ParseError::UnexpectedChar('-', 0))));
-        assert!(matches!(parse("+5s"), Err(ParseError::UnexpectedChar('+', 0))));
+        assert!(matches!(
+            parse("-5s"),
+            Err(ParseError::UnexpectedChar('-', 0))
+        ));
+        assert!(matches!(
+            parse("+5s"),
+            Err(ParseError::UnexpectedChar('+', 0))
+        ));
     }
 
     #[test]
     fn rejects_whitespace() {
         // Whitespace is not part of the grammar — leading, internal, or trailing.
-        assert!(matches!(parse(" 5s"), Err(ParseError::UnexpectedChar(' ', 0))));
-        assert!(matches!(parse("5 s"), Err(ParseError::UnexpectedChar(' ', _))));
-        assert!(matches!(parse("5s "), Err(ParseError::UnexpectedChar(' ', _))));
-        assert!(matches!(parse("1h 30m"), Err(ParseError::UnexpectedChar(' ', _))));
+        assert!(matches!(
+            parse(" 5s"),
+            Err(ParseError::UnexpectedChar(' ', 0))
+        ));
+        assert!(matches!(
+            parse("5 s"),
+            Err(ParseError::UnexpectedChar(' ', _))
+        ));
+        assert!(matches!(
+            parse("5s "),
+            Err(ParseError::UnexpectedChar(' ', _))
+        ));
+        assert!(matches!(
+            parse("1h 30m"),
+            Err(ParseError::UnexpectedChar(' ', _))
+        ));
     }
 
     #[test]
     fn rejects_uppercase_units() {
         // Units are lowercase only. 'H' is not a valid unit.
-        assert!(matches!(parse("5H"), Err(ParseError::UnexpectedChar('H', _))));
-        assert!(matches!(parse("5M"), Err(ParseError::UnexpectedChar('M', _))));
-        assert!(matches!(parse("5S"), Err(ParseError::UnexpectedChar('S', _))));
+        assert!(matches!(
+            parse("5H"),
+            Err(ParseError::UnexpectedChar('H', _))
+        ));
+        assert!(matches!(
+            parse("5M"),
+            Err(ParseError::UnexpectedChar('M', _))
+        ));
+        assert!(matches!(
+            parse("5S"),
+            Err(ParseError::UnexpectedChar('S', _))
+        ));
     }
 
     #[test]
     fn rejects_decimal() {
         // No fractional values.
-        assert!(matches!(parse("1.5h"), Err(ParseError::UnexpectedChar('.', _))));
+        assert!(matches!(
+            parse("1.5h"),
+            Err(ParseError::UnexpectedChar('.', _))
+        ));
     }
 
     #[test]
@@ -212,8 +242,14 @@ mod tests {
     #[test]
     fn rejects_unit_without_number() {
         // Lone unit char at start is unexpected; we report it as such.
-        assert!(matches!(parse("s"), Err(ParseError::UnexpectedChar('s', 0))));
-        assert!(matches!(parse("hms"), Err(ParseError::UnexpectedChar('h', 0))));
+        assert!(matches!(
+            parse("s"),
+            Err(ParseError::UnexpectedChar('s', 0))
+        ));
+        assert!(matches!(
+            parse("hms"),
+            Err(ParseError::UnexpectedChar('h', 0))
+        ));
     }
 
     #[test]
@@ -227,8 +263,7 @@ mod tests {
     fn parses_canonical_examples_from_readme() {
         // Sanity: every duration mentioned in the README must parse.
         for s in [
-            "30s", "5m", "2h", "1h30m", "2m30s", "1h30m45s",
-            "25m", "90m", "10s",
+            "30s", "5m", "2h", "1h30m", "2m30s", "1h30m45s", "25m", "90m", "10s",
         ] {
             assert!(parse(s).is_ok(), "README example {s:?} failed to parse");
         }
