@@ -1,36 +1,67 @@
 # nudge
 
-ADHD-friendly self-nudge timer for Wayland. You give it a duration. After that duration it flashes a red full-screen overlay with a message. Then it waits a shorter time and does it again. Each cycle the wait shrinks (exponential decay). When the wait would drop below a configurable floor, it locks the screen and exits — forcing you away from the PC.
+A red-screen kitchen timer for people who lose hours to their PC. You set a duration, you keep working, and when the time is up nudge starts gently shouting at you until it locks the screen.
 
-Inspired by the simple observation that "stop and stand up" reminders work better when they're hard to ignore.
+Built for ADHD self-management on Wayland (Hyprland and friends). It is harder to ignore than a notification but never grabs your input — you can finish the sentence you're typing, then walk away.
 
-## Status
+## What it looks like
 
-Pre-alpha. Spec frozen, scaffolding in progress. See [Spec](#spec) below.
+```sh
+nudge 25m -m "POMODORO DONE"
+```
+
+Wait 25 minutes. Red flash with "POMODORO DONE". Sleep 5 minutes. Red flash. Sleep 2½ minutes. Red flash. Each gap halves until it gets short enough that the screen just locks. About 35 minutes from start to lock.
+
+```sh
+nudge 2h 15m -m "leave for the train"
+```
+
+Wait 2 hours. First red flash. Then ~15 minutes of escalating nudges before the screen locks. Use this when you have a hard deadline and want a fixed warning window.
+
+```sh
+nudge 90m
+```
+
+Wait 90 minutes, then the default 10-minute tail of nudges, then lock. Good catch-all for "I want to stop working in roughly an hour and a half."
+
+```sh
+nudge 30s 10s
+```
+
+The fastest e2e test you can run. Wait 30s, get a couple of quick nudges, lock. Use this to confirm everything works before relying on it.
 
 ## Why
 
-Built for personal use. ADHD-affected users can lose track of time on the PC for hours. A passive notification is too easy to dismiss; a full-screen red flash is harder to ignore but still non-blocking (visual only, no input grab — see [Design decisions](#design-decisions)). The escalating cadence mirrors how a real person would nag you: "in 30 minutes" → "in 15" → "ok seriously now" → forces lock.
+Passive notifications are too easy to dismiss when you're in flow. A full-screen red flash is hard to miss but doesn't break what you're doing — your keyboard still works, your mouse still works, you finish what you were doing and stand up.
+
+The escalating cadence mirrors how a real person would nag you: a polite check-in, then a firmer one, then "seriously, leave," then it makes the decision for you and locks the screen.
 
 ## Install
 
 ### Nix flake
 
 ```sh
-nix run github:YOUR_USER/nudge -- 1h30m
+nix run github:6543/nudge -- 25m
 ```
 
-Or add to your system / home-manager config via `inputs.nudge.url = "github:YOUR_USER/nudge";` and pull `nudge.packages.${system}.default`.
+Or in your system / home-manager config:
 
-### From source (NixOS dev shell)
+```nix
+inputs.nudge.url = "github:6543/nudge";
+# then pull `nudge.packages.${system}.default`
+```
+
+### From source
 
 ```sh
-git clone https://github.com/YOUR_USER/nudge
+git clone https://github.com/6543/nudge
 cd nudge
 nix develop
 cargo build --release
 ./target/release/nudge 5m
 ```
+
+You'll need `hyprlock` available on `PATH` for the screen-lock step.
 
 ## Usage
 
@@ -38,31 +69,24 @@ cargo build --release
 nudge <duration> [runway] [flags]
 ```
 
-The optional second positional argument, the **runway**, controls how much
-nudging happens between the first alert and the screen lock. Whatever you
-give there will be roughly the total time you have left after the first
-nudge; default is 10m, or 20m if the first duration is ≥ 2h. See
-[Runway](#runway) below.
+`<duration>` is how long until the first alert. `[runway]` is optional and controls how much nudging happens between the first alert and the lock — see [Runway](#runway).
 
 ### Duration format
 
-Compound units, integer values:
+Compound units, integer values, ordered `h → m → s`:
 
-| Example  | Meaning            |
-| -------- | ------------------ |
-| `30s`    | 30 seconds         |
-| `5m`     | 5 minutes          |
-| `2h`     | 2 hours            |
-| `1h30m`  | 1 hour 30 minutes  |
-| `2m30s`  | 2 minutes 30 sec   |
-| `1h30m45s` | full house       |
-
-Order must be `h → m → s`, each unit at most once.
+| Example     | Meaning            |
+| ----------- | ------------------ |
+| `30s`       | 30 seconds         |
+| `5m`        | 5 minutes          |
+| `2h`        | 2 hours            |
+| `1h30m`     | 1 hour 30 minutes  |
+| `2m30s`     | 2 minutes 30 sec   |
+| `1h30m45s`  | full house         |
 
 ### Runway
 
-The runway is the total time the nudging tail lasts after the first alert.
-It bounds the gap between the first alert and the screen lock.
+The runway is the total time the nudging tail lasts after the first alert. Whatever you put there is roughly how long you have left before the lock kicks in.
 
 ```sh
 nudge 2h         # alert at 2h, then ~20m of decaying nudges, then lock
@@ -70,109 +94,67 @@ nudge 2h 15m     # alert at 2h, then ~15m of decaying nudges, then lock
 nudge 30m 5m     # alert at 30m, then ~5m of decaying nudges, then lock
 ```
 
-Mechanically: the first post-alert wait is `runway × decay` (= `runway/2`
-with the default decay factor of `0.5`), halved each cycle. The geometric
-series sums to ~runway before hitting the floor.
-
-If you don't pass a runway, the default is:
+If you don't pass a runway, the default depends on the initial duration:
 
 | Initial duration | Default runway |
 | ---------------- | -------------- |
 | `< 2h`           | `10m`          |
 | `≥ 2h`           | `20m`          |
 
-A runway longer than the initial duration is allowed (e.g. `nudge 5m 30m`)
-— don't do that unless you have a reason.
+A runway longer than the initial duration is allowed (`nudge 5m 30m`) but probably not what you want.
 
 ### Flags
 
-| Flag                          | Default          | Meaning                                         |
-| ----------------------------- | ---------------- | ----------------------------------------------- |
-| `-d, --decay <FLOAT>`         | `0.5`            | Decay factor. Each cycle the wait is multiplied by this. Must be `0 < x < 1`. |
-| `-f, --floor <DURATION>`      | `5s`             | When the next wait would be ≤ this, stop and lock. |
-| `-m, --message <STRING>`      | `"time expired"` | Text shown on the red overlay.                  |
-| `-D, --alert-duration <DUR>`  | `2s`             | How long the red overlay is visible per alert.  |
-| `-b, --beep`                  | off              | Print BEL (`\x07`) on each alert. Your terminal/WM decides what that does. |
-| `-h, --help`                  | —                | Print help.                                     |
-| `-V, --version`               | —                | Print version.                                  |
+| Flag                          | Default          | Meaning                                            |
+| ----------------------------- | ---------------- | -------------------------------------------------- |
+| `-d, --decay <FLOAT>`         | `0.5`            | Each gap is multiplied by this. `0 < x < 1`.       |
+| `-f, --floor <DURATION>`      | `5s`             | When the next gap would be ≤ this, lock and exit.  |
+| `-m, --message <STRING>`      | `"time expired"` | Big text on the red overlay.                       |
+| `-D, --alert-duration <DUR>`  | `2s`             | How long each red flash stays visible.             |
+| `-b, --beep`                  | off              | Print BEL (`\x07`) on each alert.                  |
+| `-h, --help`                  | —                | Print help.                                        |
+| `-V, --version`               | —                | Print version.                                     |
 
-### Example
+### Shell aliases
 
-```sh
-nudge 5m -m "stand up dummy"
-```
-
-With the default 10m runway and 0.5 decay, here is what happens:
-
-```
-t = 0           │ start, sleep 5m
-t = 5m          │ ▓▓▓ red flash 2s ▓▓▓  "stand up dummy"
-t = 5m2s        │ sleep 5m  (runway × decay)
-t = 10m2s       │ ▓▓▓ red flash 2s ▓▓▓
-t = 10m4s       │ sleep 2m30s
-t = 12m34s      │ ▓▓▓ red flash 2s ▓▓▓
-                  ...
-                  next wait ≤ floor → hyprlock → exit 0
-```
-
-Total tail after the first alert ≈ 10 minutes, regardless of how long the
-initial timer was. To override the runway, pass it as the second positional:
-
-```sh
-nudge 2h 15m   # don't miss the 14:15 train
-```
-
-### Tip: pair with a shell alias
+The whole tool is meant to be aliased:
 
 ```sh
 alias work='nudge 25m -m "POMODORO DONE"'
-alias deep='nudge 1h30m -d 0.6 -m "stand up. drink water."'
+alias deep='nudge 1h30m -m "stand up. drink water."'
+alias train='nudge 2h 15m -m "LEAVE FOR THE TRAIN"'
 ```
 
 ## Design decisions
 
-These are deliberate. Open an issue if you disagree, but know the tradeoffs were considered.
-
-- **No input grab during alert.** The overlay is purely visual. You can keep typing if you really need to. Grabbing keyboard/mouse for a full second every cycle would break flow for anyone trying to finish a sentence; the flash itself is the nudge, not coercion.
+- **No input grab.** The overlay is purely visual. You can keep typing. The flash itself is the nudge, not coercion.
 - **Beep off by default.** Audio is intrusive in shared spaces. Opt-in via `-b`.
-- **No daemon, no IPC, no config file.** It's a CLI tool. You launch it, it runs, it dies. State lives in the process. Reboot mid-timer = timer dies. KISS.
-- **Multiple concurrent instances allowed.** If you launch `nudge` twice, you get two independent alert schedules. This is your decision to make.
-- **Hard-coded `hyprlock` for v1.** A locker abstraction would be premature. If/when someone wants `swaylock` or `loginctl lock-session`, we'll add a flag.
-- **Wayland layer-shell only for v1.** The UI is split behind a `UiBackend` trait, so an X11 or macOS backend can be added without touching the timer core. Not done now because it's not needed now.
+- **No daemon, no IPC, no config file.** It's a CLI tool. You launch it, it runs, it dies.
+- **Multiple instances allowed.** Run two `nudge`s, get two independent schedules. Your decision.
+- **Wayland layer-shell only.** The UI is split behind a backend trait, so X11 / macOS support is a "someone implements one trait" away, but it's not done now because it's not needed now.
+- **Hard-coded `hyprlock`.** A locker abstraction would be premature. Open an issue if you want `swaylock` etc.
 
-## Architecture
+## For the technically interested
+
+<details>
+<summary>Architecture</summary>
 
 ```
 src/
   main.rs        cli parse, timer loop, signal handling, lock spawn
-  duration.rs    "1h30m" → std::time::Duration parser + tests
+  duration.rs    "1h30m" → std::time::Duration parser
   ui/
     mod.rs       UiBackend trait
-    iced.rs      IcedLayerShellUi impl (red overlay via iced_layershell)
+    iced.rs      Wayland layer-shell impl using iced + iced_layershell
   alert.rs       AlertApp — minimal iced Application showing one alert, then exits
 ```
 
-The timer core is plain blocking sleep + arithmetic. Each alert spins up `AlertApp::run(...)`, which blocks until the alert window closes itself after `alert-duration`, then returns. This keeps the iced runtime out of the main loop and makes the `UiBackend` trait genuinely portable.
+The timer core is plain blocking sleep + arithmetic. Each alert spawns a fresh iced runtime that blocks until the alert duration elapses, then returns. The iced runtime is not kept alive between alerts; the `UiBackend` trait method is synchronous from the timer loop's perspective. This keeps the abstraction genuinely portable for future X11 / macOS backends.
 
-## Build / dev
+</details>
 
-```sh
-nix develop                          # enter dev shell
-cargo run -- 10s -d 0.5 -f 2s        # quick e2e — fires after 10s, then 5s, then locks
-cargo test                           # unit tests for duration parser & decay math
-cargo clippy -- -D warnings
-nix flake check                      # fmt + clippy in CI
-```
-
-For the tightest dev loop:
-
-```sh
-bacon
-```
-
-## Spec
-
-Below is the locked v1 specification. PRs that contradict this need to amend the spec first.
+<details>
+<summary>Spec</summary>
 
 ### Invocation
 ```
@@ -182,11 +164,8 @@ nudge <duration> [runway] [flags]
 ### Behavior
 1. Parse args; validate. Bad input → stderr + exit 2.
 2. Sleep `<duration>`.
-3. Show red overlay covering all outputs for `<alert-duration>`. Centered
-   `<message>` and a smaller subtitle showing the next wait or `"locking
-   screen"`. (Beep if `-b`.)
-4. Set `wait = runway` after the first alert; thereafter
-   `wait = previous_wait * decay`.
+3. Show red overlay covering all outputs for `<alert-duration>`. Centered `<message>` and a smaller subtitle showing the next wait, or `"locking screen"` on the final alert. (Beep if `-b`.)
+4. Set `wait = runway` after the first alert; thereafter `wait = previous_wait * decay`.
 5. If `next_wait ≤ floor` → spawn locker, detach, exit 0.
 6. Else sleep `next_wait`, goto 3.
 
@@ -203,18 +182,31 @@ nudge <duration> [runway] [flags]
 - SIGINT / SIGTERM → tear down overlay if visible → exit 130 / 143.
 
 ### Non-goals (v1)
-- ❌ Daemon mode
-- ❌ Multi-instance coordination
-- ❌ Persistence across reboot
-- ❌ Audio beyond BEL
-- ❌ Notification daemon integration
-- ❌ Config file (use shell aliases)
-- ❌ Input grab
+- Daemon mode
+- Multi-instance coordination
+- Persistence across reboot
+- Audio beyond BEL
+- Notification daemon integration
+- Config file (use shell aliases)
+- Input grab
+
+</details>
+
+<details>
+<summary>Build / dev</summary>
+
+```sh
+nix develop                          # enter dev shell
+cargo run -- 30s 10s                 # quickest e2e test
+cargo test                           # unit tests
+cargo clippy -- -D warnings
+nix flake check                      # fmt + clippy in CI
+```
+
+CI runs on Woodpecker — see `.woodpecker.yaml`.
+
+</details>
 
 ## License
 
-TBD — likely MIT or Apache-2.0.
-
-## Acknowledgements
-
-Flake structure adapted from [animolauncher](https://github.com/) (same author's launcher project).
+[MIT](LICENSE)
