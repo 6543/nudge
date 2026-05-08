@@ -6,13 +6,13 @@ steps:
     image: nixos/nix
     commands:
       - echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf
-      - nix --accept-flake-config flake check .#format
+      - nix --accept-flake-config build .#checks.x86_64-linux.format
 
   clippy:
     image: nixos/nix
     commands:
       - echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf
-      - nix --accept-flake-config flake check .#clippy
+      - nix --accept-flake-config build .#checks.x86_64-linux.clippy
 
   test:
     image: nixos/nix
