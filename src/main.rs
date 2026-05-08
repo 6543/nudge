@@ -358,4 +358,199 @@ mod tests {
             Duration::from_secs(20 * 60),
         );
     }
+
+    // ── decay() edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn decay_factor_near_one_barely_shrinks() {
+        // factor=0.99 against 100s -> ~99s (within 1ms tolerance of float math).
+        let got = decay(Duration::from_secs(100), 0.99);
+        let want = Duration::from_secs(99);
+        let diff = if got > want { got - want } else { want - got };
+        assert!(
+            diff < Duration::from_millis(1),
+            "decay(100s, 0.99) = {got:?}, expected ~99s",
+        );
+    }
+
+    #[test]
+    fn decay_factor_near_zero_collapses() {
+        // factor=0.01 against 100s -> ~1s (within 1ms).
+        let got = decay(Duration::from_secs(100), 0.01);
+        let want = Duration::from_secs(1);
+        let diff = if got > want { got - want } else { want - got };
+        assert!(
+            diff < Duration::from_millis(1),
+            "decay(100s, 0.01) = {got:?}, expected ~1s",
+        );
+    }
+
+    #[test]
+    fn decay_preserves_subsecond_resolution() {
+        // 1s × 0.5 should give 500ms, not be rounded to 0.
+        assert_eq!(
+            decay(Duration::from_secs(1), 0.5),
+            Duration::from_millis(500),
+        );
+    }
+
+    #[test]
+    fn decay_handles_long_durations() {
+        // 8 hours × 0.5 should give exactly 4 hours, no precision drift.
+        assert_eq!(
+            decay(Duration::from_secs(8 * 3600), 0.5),
+            Duration::from_secs(4 * 3600),
+        );
+    }
+
+    // ── humanize() edge cases ─────────────────────────────────────────────
+
+    #[test]
+    fn humanize_zero() {
+        assert_eq!(humanize(Duration::ZERO), "0s");
+    }
+
+    #[test]
+    fn humanize_exactly_one_minute() {
+        // 60s should render as "1m", not "60s" — minute boundary takes priority.
+        assert_eq!(humanize(Duration::from_secs(60)), "1m");
+    }
+
+    #[test]
+    fn humanize_exactly_one_hour() {
+        // 3600s should render as "1h", not "60m".
+        assert_eq!(humanize(Duration::from_secs(3600)), "1h");
+    }
+
+    #[test]
+    fn humanize_drops_seconds_above_one_hour() {
+        // Above 1h, sub-minute precision is intentionally dropped.
+        // 1h 0m 30s -> "1h", not "1h 0m 30s".
+        assert_eq!(humanize(Duration::from_secs(3630)), "1h");
+        // 1h 5m 45s -> "1h 5m" (seconds dropped).
+        assert_eq!(humanize(Duration::from_secs(3945)), "1h 5m");
+    }
+
+    #[test]
+    fn humanize_just_under_one_minute() {
+        // 59s stays in seconds.
+        assert_eq!(humanize(Duration::from_secs(59)), "59s");
+    }
+
+    #[test]
+    fn humanize_just_under_one_hour() {
+        // 59m 59s stays as "59m 59s" — no rounding up to "1h".
+        assert_eq!(humanize(Duration::from_secs(3599)), "59m 59s");
+    }
+
+    // ── Config::from_cli validation ───────────────────────────────────────
+
+    /// Build a Cli with defaults for every field except those overridden,
+    /// to keep test bodies focused on the field being exercised.
+    fn cli(duration: &str) -> Cli {
+        Cli {
+            duration: duration.into(),
+            runway: None,
+            decay: 0.5,
+            floor: "5s".into(),
+            message: "test".into(),
+            alert_duration: "2s".into(),
+            beep: false,
+        }
+    }
+
+    #[test]
+    fn config_accepts_canonical_examples() {
+        // The four examples from the README.
+        let mut c = cli("25m");
+        assert!(Config::from_cli(c).is_ok());
+        c = cli("2h");
+        c.runway = Some("15m".into());
+        assert!(Config::from_cli(c).is_ok());
+        c = cli("90m");
+        assert!(Config::from_cli(c).is_ok());
+        c = cli("30s");
+        c.runway = Some("10s".into());
+        assert!(Config::from_cli(c).is_ok());
+    }
+
+    #[test]
+    fn config_rejects_decay_out_of_range() {
+        let mut c = cli("5m");
+        c.decay = 0.0;
+        assert!(Config::from_cli(c).is_err());
+        let mut c = cli("5m");
+        c.decay = 1.0;
+        assert!(Config::from_cli(c).is_err());
+        let mut c = cli("5m");
+        c.decay = 1.5;
+        assert!(Config::from_cli(c).is_err());
+        let mut c = cli("5m");
+        c.decay = -0.5;
+        assert!(Config::from_cli(c).is_err());
+    }
+
+    #[test]
+    fn config_rejects_initial_at_or_below_floor() {
+        // initial == floor is invalid (would alert and lock instantly).
+        let mut c = cli("5s");
+        c.floor = "5s".into();
+        assert!(Config::from_cli(c).is_err());
+        let mut c = cli("3s");
+        c.floor = "5s".into();
+        assert!(Config::from_cli(c).is_err());
+    }
+
+    #[test]
+    fn config_rejects_runway_at_or_below_floor() {
+        // runway must be strictly above floor or the loop locks immediately
+        // after the first alert.
+        let mut c = cli("10m");
+        c.runway = Some("5s".into());
+        c.floor = "5s".into();
+        assert!(Config::from_cli(c).is_err());
+        let mut c = cli("10m");
+        c.runway = Some("3s".into());
+        c.floor = "5s".into();
+        assert!(Config::from_cli(c).is_err());
+    }
+
+    #[test]
+    fn config_allows_runway_greater_than_initial() {
+        // Documented as allowed: "their problem". Exercise it.
+        let mut c = cli("5m");
+        c.runway = Some("30m".into());
+        let cfg = Config::from_cli(c).expect("should be allowed");
+        assert!(cfg.runway > cfg.initial);
+    }
+
+    #[test]
+    fn config_rejects_unparseable_durations() {
+        // Bad initial.
+        let c = cli("not-a-duration");
+        assert!(Config::from_cli(c).is_err());
+        // Bad runway.
+        let mut c = cli("5m");
+        c.runway = Some("garbage".into());
+        assert!(Config::from_cli(c).is_err());
+        // Bad floor.
+        let mut c = cli("5m");
+        c.floor = "?".into();
+        assert!(Config::from_cli(c).is_err());
+        // Bad alert duration.
+        let mut c = cli("5m");
+        c.alert_duration = "soon".into();
+        assert!(Config::from_cli(c).is_err());
+    }
+
+    #[test]
+    fn config_uses_default_runway_when_omitted() {
+        // <2h initial -> 10m default
+        let cfg = Config::from_cli(cli("30m")).unwrap();
+        assert_eq!(cfg.runway, Duration::from_secs(10 * 60));
+
+        // >=2h initial -> 20m default
+        let cfg = Config::from_cli(cli("3h")).unwrap();
+        assert_eq!(cfg.runway, Duration::from_secs(20 * 60));
+    }
 }
