@@ -148,6 +148,62 @@ fn decay(prev: Duration, factor: f64) -> Duration {
     }
 }
 
+/// The algorithm's output as a pure data structure: the sequence of waits
+/// the program will perform before each alert. The number of alerts equals
+/// `waits.len()`. After the final alert the screen is locked.
+///
+/// `waits[0]` is always the initial duration (sleep before alert 1).
+/// `waits[1..]` are post-alert sleeps, each one decayed from the previous.
+/// The loop stops generating waits when the next decayed value would be
+/// ≤ floor — that wait is omitted (we lock instead).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plan {
+    pub waits: Vec<Duration>,
+}
+
+impl Plan {
+    /// Total wall-clock time from `nudge` invocation until the screen lock,
+    /// not counting alert overlay duration (typically ~2s × alert count,
+    /// which is negligible against the multi-minute waits).
+    pub fn total(&self) -> Duration {
+        self.waits.iter().sum()
+    }
+
+    /// Number of alerts the user will see before the lock.
+    pub fn alert_count(&self) -> usize {
+        self.waits.len()
+    }
+}
+
+/// Compute the full plan up-front, given the algorithm parameters.
+///
+/// This is the single source of truth for the timer behaviour. `run()` walks
+/// the same plan executing real sleeps and alerts; tests walk it as data.
+///
+/// Semantics (mirrors the loop in `run()`):
+///   - `waits[0]` is the initial wait (before alert 1).
+///   - For each subsequent alert N, `waits[N-1]` is `decay(prev_wait)` where
+///     `prev_wait` starts at `runway` and is replaced by `decay(prev_wait)`
+///     each iteration.
+///   - The loop terminates when `decay(prev_wait) <= floor`; the final alert
+///     is the one with `next <= floor`, after which the screen locks.
+fn plan(initial: Duration, runway: Duration, decay_factor: f64, floor: Duration) -> Plan {
+    let mut waits = vec![initial];
+    let mut wait = runway;
+    loop {
+        let next = decay(wait, decay_factor);
+        if next <= floor {
+            // The alert about to fire is the final one; lock follows.
+            // No further wait is scheduled.
+            break;
+        }
+        // `next` becomes the actual sleep before the *following* alert.
+        waits.push(next);
+        wait = next;
+    }
+    Plan { waits }
+}
+
 fn beep() {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(b"\x07");
@@ -181,31 +237,28 @@ fn humanize(d: Duration) -> String {
 
 fn run(cfg: Config, cancel: Arc<AtomicBool>) -> Result<(), String> {
     let ui = IcedLayerShellUi::new();
+    let plan = plan(cfg.initial, cfg.runway, cfg.decay, cfg.floor);
 
-    // Phase 1: initial wait.
-    sleep_cancellable(cfg.initial, &cancel);
-    if cancel.load(Ordering::Relaxed) {
-        return Ok(());
-    }
+    // Walk the plan: for each scheduled wait, sleep then alert. The last
+    // alert in the plan is the final one — after it, lock and exit.
+    let last_idx = plan.waits.len().saturating_sub(1);
+    for (idx, wait) in plan.waits.iter().enumerate() {
+        sleep_cancellable(*wait, &cancel);
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
-    // The decay loop starts from `runway`, not `initial`. This makes the
-    // first post-alert wait `runway * decay` (= runway/2 with default decay),
-    // which gives a geometric tail that sums to ~runway. Decoupling the
-    // initial wait from the tail length is the whole point of the feature:
-    // a 2h timer no longer means a 1h gap until the second nudge.
-    let mut wait = cfg.runway;
-    loop {
-        // Compute what comes next BEFORE showing the alert, so the alert
-        // can display it as a subtitle.
-        let next = decay(wait, cfg.decay);
-        let is_final = next <= cfg.floor;
+        let is_final = idx == last_idx;
+        // Subtitle for the alert about to fire: either how long until the
+        // *next* alert, or "locking screen" if this is the last one.
         let subtitle: String = if is_final {
             "locking screen".into()
         } else {
-            format!("next nudge in {}", humanize(next))
+            // The next sleep's duration tells the user when to expect the
+            // next nudge. plan.waits[idx + 1] is the post-alert sleep.
+            format!("next nudge in {}", humanize(plan.waits[idx + 1]))
         };
 
-        // Phase 2: alert.
         if cfg.beep {
             beep();
         }
@@ -215,17 +268,15 @@ fn run(cfg: Config, cancel: Arc<AtomicBool>) -> Result<(), String> {
             return Ok(());
         }
 
-        // Phase 3 / 4: lock + exit, or decay + sleep again.
         if is_final {
             spawn_locker()?;
             return Ok(());
         }
-        wait = next;
-        sleep_cancellable(wait, &cancel);
-        if cancel.load(Ordering::Relaxed) {
-            return Ok(());
-        }
     }
+    // Unreachable in practice: plan() always produces at least one wait
+    // (the initial duration), and the loop returns on the final alert.
+    // Treat reaching here as a no-op rather than panicking.
+    Ok(())
 }
 
 fn install_signal_handlers() -> Arc<AtomicBool> {
@@ -552,5 +603,141 @@ mod tests {
         // >=2h initial -> 20m default
         let cfg = Config::from_cli(cli("3h")).unwrap();
         assert_eq!(cfg.runway, Duration::from_secs(20 * 60));
+    }
+
+    // ── plan() — full algorithm simulation ────────────────────────────────
+
+    /// Helper: build a Plan from human-readable durations.
+    fn p(initial: &str, runway: &str, decay: f64, floor: &str) -> Plan {
+        plan(
+            durparse::parse(initial).unwrap(),
+            durparse::parse(runway).unwrap(),
+            decay,
+            durparse::parse(floor).unwrap(),
+        )
+    }
+
+    #[test]
+    fn plan_single_alert_when_runway_decays_to_floor_immediately() {
+        // nudge 30s 10s -> first decay 10s × 0.5 = 5s = floor -> stop.
+        // Only the initial wait is scheduled; the alert it precedes is final.
+        let plan = p("30s", "10s", 0.5, "5s");
+        assert_eq!(plan.alert_count(), 1);
+        assert_eq!(plan.waits, vec![Duration::from_secs(30)]);
+    }
+
+    #[test]
+    fn plan_25m_with_default_runway_matches_readme() {
+        // README claim: nudge 25m -> ~35 minutes total, ending in lock.
+        let plan = p("25m", "10m", 0.5, "5s");
+        assert_eq!(plan.alert_count(), 7);
+
+        // First wait is the initial duration.
+        assert_eq!(plan.waits[0], Duration::from_secs(25 * 60));
+
+        // Tail values: 5m, 2m30s, 1m15s, 37.5s, 18.75s, 9.375s.
+        let tail_secs: Vec<f64> = plan.waits[1..].iter().map(|d| d.as_secs_f64()).collect();
+        assert_eq!(tail_secs, vec![300.0, 150.0, 75.0, 37.5, 18.75, 9.375]);
+
+        // Total ~ 25m + 9m50s ~ 34m50s.
+        let total = plan.total();
+        assert!(
+            total >= Duration::from_secs(34 * 60 + 45)
+                && total <= Duration::from_secs(35 * 60 + 5),
+            "expected total ~35min, got {total:?}",
+        );
+    }
+
+    #[test]
+    fn plan_2h_15m_train_example() {
+        // README claim: nudge 2h 15m -> alert at 2h, then ~15m of nudges.
+        let plan = p("2h", "15m", 0.5, "5s");
+        assert_eq!(plan.waits[0], Duration::from_secs(2 * 3600));
+
+        // Tail (excluding initial) should sum to roughly the runway value.
+        // Geometric series: 15m × Σ(0.5^k for k=1..) ≈ 15m as floor approaches 0.
+        // With a 5s floor we lose the smallest terms, so it's a bit less.
+        let tail: Duration = plan.waits[1..].iter().sum();
+        let runway = Duration::from_secs(15 * 60);
+        // Tail is ~runway × (1 - epsilon). Allow generous bounds.
+        assert!(
+            tail >= runway / 2 && tail <= runway,
+            "expected tail in (runway/2, runway], got {tail:?} vs runway={runway:?}",
+        );
+
+        // Total should land within ~30s of (initial + runway).
+        let total = plan.total();
+        let expected = Duration::from_secs(2 * 3600 + 15 * 60);
+        let diff = if total > expected {
+            total - expected
+        } else {
+            expected - total
+        };
+        assert!(
+            diff < Duration::from_secs(30),
+            "total {total:?} expected ~{expected:?} (diff {diff:?})",
+        );
+    }
+
+    #[test]
+    fn plan_first_alert_always_at_initial_duration() {
+        // No matter what the runway is, the very first wait equals initial.
+        for (init, run) in [("1m", "30s"), ("2h", "20m"), ("5m", "20m"), ("30s", "10s")] {
+            let plan = p(init, run, 0.5, "5s");
+            assert_eq!(plan.waits[0], durparse::parse(init).unwrap());
+        }
+    }
+
+    #[test]
+    fn plan_strictly_decreasing_after_initial() {
+        // Each post-initial wait must be shorter than the one before it
+        // (decay factor < 1).
+        let plan = p("1h", "30m", 0.5, "5s");
+        for window in plan.waits[1..].windows(2) {
+            assert!(window[0] > window[1], "tail not decreasing: {window:?}");
+        }
+    }
+
+    #[test]
+    fn plan_terminates_for_high_decay_factor() {
+        // factor=0.99 means tail shrinks slowly. Must still terminate before
+        // the test times out (5s floor is well above 0).
+        let plan = p("10m", "1m", 0.99, "5s");
+        assert!(plan.alert_count() < 1000, "plan grew too large");
+        assert!(plan.alert_count() > 1);
+    }
+
+    #[test]
+    fn plan_floor_at_or_above_runway_yields_one_alert() {
+        // If floor is so high that the first decay step is already below it,
+        // we get a single alert (the initial one) and lock.
+        let plan = p("5m", "10s", 0.5, "10s");
+        assert_eq!(plan.alert_count(), 1);
+        assert_eq!(plan.waits, vec![Duration::from_secs(300)]);
+    }
+
+    #[test]
+    fn plan_subtitle_humanization_is_nonempty() {
+        // For every scheduled wait, the humanized form must be non-empty —
+        // it's what gets shown to the user as the alert subtitle.
+        let plan = p("1h", "20m", 0.5, "5s");
+        for w in &plan.waits {
+            assert!(!humanize(*w).is_empty(), "empty subtitle for {w:?}");
+        }
+    }
+
+    #[test]
+    fn plan_long_initial_short_runway_useful_pattern() {
+        // The "don't miss the train" pattern: long initial, short runway.
+        // Should produce one alert at the deadline, then a couple of close-
+        // together nudges, then lock.
+        let plan = p("2h", "1m", 0.5, "5s");
+        assert!(plan.alert_count() >= 2);
+        assert_eq!(plan.waits[0], Duration::from_secs(2 * 3600));
+
+        // Tail should sum to less than runway (it's a partial geometric
+        // series cut off at the floor).
+        let tail: Duration = plan.waits[1..].iter().sum();
+        assert!(tail <= Duration::from_secs(60));
     }
 }
