@@ -35,8 +35,14 @@ cargo build --release
 ## Usage
 
 ```
-nudge <duration> [flags]
+nudge <duration> [runway] [flags]
 ```
+
+The optional second positional argument, the **runway**, controls how much
+nudging happens between the first alert and the screen lock. Whatever you
+give there will be roughly the total time you have left after the first
+nudge; default is 10m, or 20m if the first duration is ≥ 2h. See
+[Runway](#runway) below.
 
 ### Duration format
 
@@ -53,6 +59,31 @@ Compound units, integer values:
 
 Order must be `h → m → s`, each unit at most once.
 
+### Runway
+
+The runway is the total time the nudging tail lasts after the first alert.
+It bounds the gap between the first alert and the screen lock.
+
+```sh
+nudge 2h         # alert at 2h, then ~20m of decaying nudges, then lock
+nudge 2h 15m     # alert at 2h, then ~15m of decaying nudges, then lock
+nudge 30m 5m     # alert at 30m, then ~5m of decaying nudges, then lock
+```
+
+Mechanically: the first post-alert wait is `runway × decay` (= `runway/2`
+with the default decay factor of `0.5`), halved each cycle. The geometric
+series sums to ~runway before hitting the floor.
+
+If you don't pass a runway, the default is:
+
+| Initial duration | Default runway |
+| ---------------- | -------------- |
+| `< 2h`           | `10m`          |
+| `≥ 2h`           | `20m`          |
+
+A runway longer than the initial duration is allowed (e.g. `nudge 5m 30m`)
+— don't do that unless you have a reason.
+
 ### Flags
 
 | Flag                          | Default          | Meaning                                         |
@@ -68,22 +99,28 @@ Order must be `h → m → s`, each unit at most once.
 ### Example
 
 ```sh
-nudge 5m -d 0.5 -f 5s -m "stand up dummy"
+nudge 5m -m "stand up dummy"
 ```
 
-What happens:
+With the default 10m runway and 0.5 decay, here is what happens:
 
 ```
-t = 0       │ start, sleep 5m
-t = 5m      │ ▓▓▓ red flash 2s ▓▓▓  "stand up dummy"
-t = 5m2s    │ sleep 2m30s
-t = 7m32s   │ ▓▓▓ red flash 2s ▓▓▓
-t = 7m32s   │ sleep 1m15s
-              ...
-              next wait = 4.5s, ≤ floor → hyprlock → exit 0
+t = 0           │ start, sleep 5m
+t = 5m          │ ▓▓▓ red flash 2s ▓▓▓  "stand up dummy"
+t = 5m2s        │ sleep 5m  (runway × decay)
+t = 10m2s       │ ▓▓▓ red flash 2s ▓▓▓
+t = 10m4s       │ sleep 2m30s
+t = 12m34s      │ ▓▓▓ red flash 2s ▓▓▓
+                  ...
+                  next wait ≤ floor → hyprlock → exit 0
 ```
 
-Total ≈ 10 minutes for a 5-minute initial timer with default decay.
+Total tail after the first alert ≈ 10 minutes, regardless of how long the
+initial timer was. To override the runway, pass it as the second positional:
+
+```sh
+nudge 2h 15m   # don't miss the 14:15 train
+```
 
 ### Tip: pair with a shell alias
 
@@ -139,14 +176,17 @@ Below is the locked v1 specification. PRs that contradict this need to amend the
 
 ### Invocation
 ```
-nudge <duration> [flags]
+nudge <duration> [runway] [flags]
 ```
 
 ### Behavior
 1. Parse args; validate. Bad input → stderr + exit 2.
 2. Sleep `<duration>`.
-3. Show red overlay covering all outputs for `<alert-duration>`. Center `<message>` text. (Beep if `-b`.)
-4. Compute `next_wait = previous_wait * decay`.
+3. Show red overlay covering all outputs for `<alert-duration>`. Centered
+   `<message>` and a smaller subtitle showing the next wait or `"locking
+   screen"`. (Beep if `-b`.)
+4. Set `wait = runway` after the first alert; thereafter
+   `wait = previous_wait * decay`.
 5. If `next_wait ≤ floor` → spawn locker, detach, exit 0.
 6. Else sleep `next_wait`, goto 3.
 
