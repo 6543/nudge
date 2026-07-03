@@ -142,6 +142,7 @@ alias train='nudge 2h 15m -m "LEAVE FOR THE TRAIN"'
 ```
 src/
   main.rs        cli parse, timer loop, signal handling, lock spawn
+  plan.rs        pure timer math: wait schedule, decay, humanize (fully unit-tested)
   duration.rs    "1h30m" → std::time::Duration parser
   ui/
     mod.rs       UiBackend trait
