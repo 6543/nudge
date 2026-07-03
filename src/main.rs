@@ -127,14 +127,20 @@ impl Config {
 }
 
 /// Cancellable sleep. Wakes early if `cancel` is set.
+///
+/// Anchored to a wall-clock deadline instead of counting fixed slices:
+/// `thread::sleep` may oversleep each slice, and over a multi-hour timer
+/// those errors add up to seconds of drift. Re-deriving the remaining time
+/// from `Instant::now()` each iteration keeps the total wait accurate.
 fn sleep_cancellable(dur: Duration, cancel: &AtomicBool) {
-    // Poll in 100ms slices. Coarse but fine for a tool that sleeps minutes.
     let slice = Duration::from_millis(100);
-    let mut remaining = dur;
-    while !cancel.load(Ordering::Relaxed) && !remaining.is_zero() {
-        let step = remaining.min(slice);
-        thread::sleep(step);
-        remaining = remaining.saturating_sub(step);
+    let deadline = std::time::Instant::now() + dur;
+    while !cancel.load(Ordering::Relaxed) {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        thread::sleep(remaining.min(slice));
     }
 }
 
