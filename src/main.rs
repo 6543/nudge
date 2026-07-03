@@ -7,7 +7,7 @@
 
 use std::io::Write;
 use std::process::{self, Command};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -399,18 +399,24 @@ fn run(cfg: Config, cancel: Arc<AtomicBool>) -> Result<(), String> {
     Ok(())
 }
 
-fn install_signal_handlers() -> Arc<AtomicBool> {
-    let cancel = Arc::new(AtomicBool::new(false));
-    // Both SIGINT and SIGTERM flip the same flag; the timer loop polls it
-    // in sleep_cancellable. We don't distinguish which signal arrived, so
-    // the exit code in main() is always 143 for any cancelled run. The
-    // shell's "$?" reporting 130 vs 143 only matters when the parent
-    // process is monitoring it — for a personal CLI, KISS wins.
+/// Install SIGINT/SIGTERM handlers.
+///
+/// Returns (cancel, signal): `cancel` is polled by the timer loop;
+/// `signal` records which signal arrived so main() can exit with the
+/// conventional 128+N code (130 for SIGINT, 143 for SIGTERM), as the
+/// spec in the README promises.
+fn install_signal_handlers() -> (Arc<AtomicBool>, Arc<AtomicUsize>) {
     use signal_hook::consts::{SIGINT, SIGTERM};
     use signal_hook::flag;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let signal = Arc::new(AtomicUsize::new(0));
+    // register_usize stores the signal number; register flips the cancel
+    // flag. Order matters: record the signal before cancel becomes visible.
+    flag::register_usize(SIGINT, Arc::clone(&signal), SIGINT as usize).expect("register SIGINT");
+    flag::register_usize(SIGTERM, Arc::clone(&signal), SIGTERM as usize).expect("register SIGTERM");
     flag::register(SIGINT, Arc::clone(&cancel)).expect("register SIGINT");
     flag::register(SIGTERM, Arc::clone(&cancel)).expect("register SIGTERM");
-    cancel
+    (cancel, signal)
 }
 
 fn main() {
@@ -423,12 +429,19 @@ fn main() {
         }
     };
 
-    let cancel = install_signal_handlers();
+    let (cancel, signal) = install_signal_handlers();
 
     match run(cfg, Arc::clone(&cancel)) {
         Ok(()) => {
             if cancel.load(Ordering::Relaxed) {
-                process::exit(EXIT_SIGTERM);
+                // Conventional 128+N; falls back to 143 if the signal
+                // number was somehow not recorded.
+                let sig = signal.load(Ordering::Relaxed);
+                process::exit(if sig == 0 {
+                    EXIT_SIGTERM
+                } else {
+                    128 + sig as i32
+                });
             }
             process::exit(0);
         }
