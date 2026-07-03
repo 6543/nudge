@@ -223,13 +223,13 @@ fn program_exists(program: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Try to spawn `argv[0]` with the remaining elements as arguments.
-/// Returns Ok(()) if the process was successfully spawned (detached).
-fn try_spawn(argv: &[&str]) -> Result<(), ()> {
-    if argv.is_empty() {
-        return Err(());
-    }
-    if !program_exists(argv[0]) {
+/// Spawn `argv[0]` with the remaining elements as arguments and leave it
+/// running detached. Returns Ok(()) if the process was successfully spawned.
+///
+/// Use for lockers that block until the user unlocks (hyprlock, swaylock,
+/// waylock) — waiting on them would hang nudge forever.
+fn spawn_detached(argv: &[&str]) -> Result<(), ()> {
+    if argv.is_empty() || !program_exists(argv[0]) {
         return Err(());
     }
     Command::new(argv[0])
@@ -237,6 +237,23 @@ fn try_spawn(argv: &[&str]) -> Result<(), ()> {
         .spawn()
         .map(|_| ())
         .map_err(|_| ())
+}
+
+/// Run `argv` to completion and report whether it exited successfully.
+///
+/// Use for one-shot lock commands (loginctl, dbus calls, xdg-screensaver):
+/// merely spawning them proves nothing — e.g. `loginctl` exists on every
+/// systemd machine and spawns fine even when no locker is registered, in
+/// which case it exits non-zero and the next strategy must be tried.
+fn run_ok(argv: &[&str]) -> bool {
+    if argv.is_empty() || !program_exists(argv[0]) {
+        return false;
+    }
+    Command::new(argv[0])
+        .args(&argv[1..])
+        .status()
+        .map(|st| st.success())
+        .unwrap_or(false)
 }
 
 /// Lock the screen using the best available method.
@@ -260,8 +277,10 @@ fn try_spawn(argv: &[&str]) -> Result<(), ()> {
 ///
 /// If every attempt fails the error from the last attempt is returned.
 fn spawn_locker() -> Result<(), String> {
-    // 1. loginctl — portable across most modern DEs on systemd.
-    if try_spawn(&["loginctl", "lock-session"]).is_ok() {
+    // 1. loginctl — portable across most modern DEs on systemd. One-shot:
+    //    wait for it and check the exit status, because it spawns fine on
+    //    every systemd machine even when locking is impossible.
+    if run_ok(&["loginctl", "lock-session"]) {
         return Ok(());
     }
 
@@ -274,49 +293,46 @@ fn spawn_locker() -> Result<(), String> {
         .to_ascii_lowercase();
     let desktop = format!("{current_desktop}:{session_desktop}");
 
-    if desktop.contains("hyprland") && try_spawn(&["hyprlock"]).is_ok() {
+    if desktop.contains("hyprland") && spawn_detached(&["hyprlock"]).is_ok() {
         return Ok(());
     }
     if desktop.contains("kde") || desktop.contains("plasma") {
-        // qdbus path used by KDE when loginctl didn't work.
-        if try_spawn(&[
+        // D-Bus paths used by KDE when loginctl didn't work. Both one-shot.
+        if run_ok(&[
             "qdbus",
             "org.freedesktop.ScreenSaver",
             "/ScreenSaver",
             "Lock",
-        ])
-        .is_ok()
-        {
+        ]) {
             return Ok(());
         }
-        if try_spawn(&[
+        if run_ok(&[
             "dbus-send",
             "--session",
             "--dest=org.freedesktop.ScreenSaver",
             "--type=method_call",
             "/ScreenSaver",
             "org.freedesktop.ScreenSaver.Lock",
-        ])
-        .is_ok()
-        {
+        ]) {
             return Ok(());
         }
     }
     if (desktop.contains("gnome") || desktop.contains("unity"))
-        && try_spawn(&["gnome-screensaver-command", "--lock"]).is_ok()
+        && run_ok(&["gnome-screensaver-command", "--lock"])
     {
         return Ok(());
     }
 
-    // 3. Generic Wayland lockers present on PATH.
+    // 3. Generic Wayland lockers present on PATH. These block until the
+    //    user unlocks, so they must be spawned detached, not waited on.
     for binary in &["hyprlock", "swaylock", "waylock"] {
-        if try_spawn(&[binary]).is_ok() {
+        if spawn_detached(&[binary]).is_ok() {
             return Ok(());
         }
     }
 
-    // 4. Legacy xdg-screensaver.
-    if try_spawn(&["xdg-screensaver", "lock"]).is_ok() {
+    // 4. Legacy xdg-screensaver. One-shot.
+    if run_ok(&["xdg-screensaver", "lock"]) {
         return Ok(());
     }
 
@@ -856,14 +872,28 @@ mod tests {
     }
 
     #[test]
-    fn try_spawn_fails_for_nonexistent() {
+    fn spawn_detached_fails_for_nonexistent() {
         // A binary that definitely doesn't exist must return Err without
         // panicking.
-        assert!(try_spawn(&["__nudge_nonexistent_binary_xyz__"]).is_err());
+        assert!(spawn_detached(&["__nudge_nonexistent_binary_xyz__"]).is_err());
     }
 
     #[test]
-    fn try_spawn_empty_argv_is_err() {
-        assert!(try_spawn(&[]).is_err());
+    fn spawn_detached_empty_argv_is_err() {
+        assert!(spawn_detached(&[]).is_err());
+    }
+
+    #[test]
+    fn run_ok_reports_exit_status() {
+        // `true` exits 0, `false` exits 1 — run_ok must distinguish them,
+        // not just report "spawned fine".
+        assert!(run_ok(&["true"]));
+        assert!(!run_ok(&["false"]));
+    }
+
+    #[test]
+    fn run_ok_nonexistent_and_empty() {
+        assert!(!run_ok(&["__nudge_nonexistent_binary_xyz__"]));
+        assert!(!run_ok(&[]));
     }
 }
