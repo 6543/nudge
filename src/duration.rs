@@ -48,10 +48,10 @@ pub fn parse(s: &str) -> Result<Duration, ParseError> {
 
     let mut total: u64 = 0;
     let mut current: Option<u64> = None;
-    let mut last_unit_rank: i8 = -1; // h=0, m=1, s=2; we require strictly increasing
-    let mut seen_h = false;
-    let mut seen_m = false;
-    let mut seen_s = false;
+    // h=0, m=1, s=2; ranks must be strictly increasing. That single
+    // invariant covers both duplicates (equal rank) and wrong order
+    // (smaller rank), so no per-unit "seen" flags are needed.
+    let mut last_unit_rank: i8 = -1;
 
     for (i, ch) in s.char_indices() {
         if let Some(d) = ch.to_digit(10) {
@@ -63,20 +63,19 @@ pub fn parse(s: &str) -> Result<Duration, ParseError> {
             current = Some(next);
         } else {
             let value = current.take().ok_or(ParseError::UnexpectedChar(ch, i))?;
-            let (rank, multiplier, dup_flag) = match ch {
-                'h' => (0, 3600, &mut seen_h),
-                'm' => (1, 60, &mut seen_m),
-                's' => (2, 1, &mut seen_s),
+            let (rank, multiplier) = match ch {
+                'h' => (0i8, 3600),
+                'm' => (1, 60),
+                's' => (2, 1),
                 _ => return Err(ParseError::UnexpectedChar(ch, i)),
             };
-            if *dup_flag {
+            if rank == last_unit_rank {
                 return Err(ParseError::DuplicateUnit(ch));
             }
-            *dup_flag = true;
-            if (rank as i8) <= last_unit_rank {
+            if rank < last_unit_rank {
                 return Err(ParseError::OutOfOrderUnit(ch));
             }
-            last_unit_rank = rank as i8;
+            last_unit_rank = rank;
             let component = value.checked_mul(multiplier).ok_or(ParseError::Overflow)?;
             total = total.checked_add(component).ok_or(ParseError::Overflow)?;
         }
